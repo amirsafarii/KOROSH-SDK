@@ -1,4 +1,9 @@
-import { InvalidToolCallError, ToolNotFoundError } from '../errors.js';
+import {
+  ConfigurationError,
+  InvalidToolCallError,
+  ToolNotFoundError,
+} from '../errors.js';
+import { assertToolExecutionBatch } from './execution-result.js';
 import { toToolMessage } from './result.js';
 import { SequentialStrategy } from './sequential-strategy.js';
 import { RunEvents } from '../events/bus.js';
@@ -23,9 +28,13 @@ export class ToolExecutor {
    * @param {import('./registry.js').ToolRegistry} options.registry
    * @param {object} [options.strategy] ExecutionStrategy (default Sequential)
    */
-  constructor({ registry, strategy }) {
+  constructor({ registry, strategy } = {}) {
+    assertRegistry(registry);
+    const resolvedStrategy = strategy ?? new SequentialStrategy();
+    assertStrategy(resolvedStrategy);
+
     this.#registry = registry;
-    this.#strategy = strategy ?? new SequentialStrategy();
+    this.#strategy = resolvedStrategy;
   }
 
   #registry;
@@ -47,9 +56,8 @@ export class ToolExecutor {
       return { executions: [], messages: [] };
     }
 
-    for (const [index, call] of calls.entries()) {
-      assertToolCallShape(call, index);
-    }
+    assertToolCalls(calls);
+    assertExecutionEnvironment(env);
 
     this.#assertToolsRegistered(calls, env);
 
@@ -60,6 +68,7 @@ export class ToolExecutor {
       turnId: env.turnId,
       events: env.events,
     });
+    assertToolExecutionBatch(calls, executions);
 
     const messages = executions.map((execution) =>
       toToolMessage({
@@ -97,6 +106,68 @@ export class ToolExecutor {
       );
       throw error;
     }
+  }
+}
+
+function assertRegistry(registry) {
+  if (
+    registry === null ||
+    typeof registry !== 'object' ||
+    typeof registry.get !== 'function' ||
+    typeof registry.has !== 'function' ||
+    typeof registry.list !== 'function'
+  ) {
+    throw new ConfigurationError(
+      'ToolExecutor requires a registry exposing get(), has(), and list().',
+      { field: 'registry' },
+    );
+  }
+}
+
+function assertStrategy(strategy) {
+  if (strategy == null || typeof strategy.execute !== 'function') {
+    throw new ConfigurationError('ToolExecutor strategy must implement execute(calls, context).', {
+      field: 'strategy',
+    });
+  }
+}
+
+function assertExecutionEnvironment(env) {
+  if (env === null || typeof env !== 'object' || Array.isArray(env)) {
+    throw new ConfigurationError('ToolExecutor.executeCalls requires an execution environment.', {
+      field: 'env',
+    });
+  }
+  if (
+    env.runContext === null ||
+    typeof env.runContext !== 'object' ||
+    typeof env.runContext.runId !== 'string' ||
+    typeof env.runContext.describe !== 'function'
+  ) {
+    throw new ConfigurationError(
+      'ToolExecutor execution environment requires a RunContext with runId and describe().',
+      { field: 'env.runContext' },
+    );
+  }
+  if (env.events != null && typeof env.events.emit !== 'function') {
+    throw new ConfigurationError('ToolExecutor execution environment events must expose emit().', {
+      field: 'env.events' },
+    );
+  }
+}
+
+function assertToolCalls(calls) {
+  const seenIds = new Map();
+  for (const [index, call] of calls.entries()) {
+    assertToolCallShape(call, index);
+    if (seenIds.has(call.id)) {
+      throw new InvalidToolCallError(`Tool call id "${call.id}" is duplicated in one batch.`, {
+        toolCallId: call.id,
+        toolCallIndex: index,
+        firstToolCallIndex: seenIds.get(call.id),
+      });
+    }
+    seenIds.set(call.id, index);
   }
 }
 

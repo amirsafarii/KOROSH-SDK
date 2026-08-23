@@ -7,6 +7,7 @@ import { timestamp } from '../utils/time.js';
  */
 export const RunEvents = Object.freeze({
   RUN_STARTED: 'run.started',
+  RUN_STATE_CHANGED: 'run.state.changed',
   RUN_COMPLETED: 'run.completed',
   RUN_FAILED: 'run.failed',
   TURN_STARTED: 'turn.started',

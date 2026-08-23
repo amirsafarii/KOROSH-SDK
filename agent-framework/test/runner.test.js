@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { Runner } from '../src/loop/runner.js';
 import { ToolRegistry } from '../src/tools/registry.js';
-import { EventBus } from '../src/events/bus.js';
+import { EventBus, RunEvents } from '../src/events/bus.js';
 import { ConfigurationError } from '../src/errors.js';
 import { MockModel } from './helpers/mock-model.js';
 import { makeAgent, makeTool } from './helpers/fixtures.js';
@@ -83,7 +83,8 @@ describe('Runner (public API)', () => {
     const runnerA2 = new Runner({ agent: makeAgent({ model: new MockModel({ script: ['y'] }) }), events: busA });
     await runnerA1.run('1');
     await runnerA2.run('2');
-    assert.equal(seenA.length, 12); // 6 lifecycle events × 2 runs on the shared bus
+    const phaseOneEvents = seenA.filter((event) => event.type !== RunEvents.RUN_STATE_CHANGED);
+    assert.equal(phaseOneEvents.length, 12); // 6 Phase 1 events × 2 runs on the shared bus
 
     const before = seenA.length;
     const runnerB = new Runner({ agent: makeAgent({ model: new MockModel({ script: ['z'] }) }) });

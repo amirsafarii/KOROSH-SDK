@@ -40,6 +40,9 @@ export class ModelError extends FrameworkError {}
 /** Thrown when the loop cannot proceed (invariant violation, missing state). */
 export class LoopError extends FrameworkError {}
 
+/** Thrown when an event is not valid for the Run's current lifecycle state. */
+export class InvalidStateTransitionError extends FrameworkError {}
+
 /** Thrown when the agent exhausts `maxTurns` without producing a final output. */
 export class MaxTurnsError extends FrameworkError {
   constructor(message, options = {}) {
