@@ -1,0 +1,27 @@
+{
+  "name": "agent-framework",
+  "version": "1.0.0",
+  "description": "Production-oriented Agent Loop framework — deterministic, provider-agnostic, extensible",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test test/agent.test.js test/events.test.js test/extra-contracts.test.js test/input.test.js test/loop.test.js test/model.test.js test/runner.test.js test/tools.test.js",
+    "test:verbose": "node --test --test-reporter=spec test/agent.test.js test/events.test.js test/extra-contracts.test.js test/input.test.js test/loop.test.js test/model.test.js test/runner.test.js test/tools.test.js",
+    "example:basic": "node examples/basic.js",
+    "example:tool": "node examples/tool.js",
+    "example:multi-turn": "node examples/multi-turn.js"
+  },
+  "keywords": [
+    "agent",
+    "llm",
+    "framework",
+    "orchestrator",
+    "agent-loop"
+  ],
+  "license": "MIT"
+}
