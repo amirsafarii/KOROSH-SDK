@@ -115,30 +115,35 @@ describe('Agent Loop — tool cycles', () => {
     assert.equal(result.output, 'all steps done');
   });
 
-  it('executes multiple tool calls in ONE turn sequentially and feeds all results back', async () => {
+  it('executes multiple tool calls in ONE turn sequentially and preserves A/B/C result order', async () => {
     const order = [];
     const a = makeTool('a', () => order.push('a'), {});
     const b = makeTool('b', () => order.push('b'), {});
+    const c = makeTool('c', () => order.push('c'), {});
     const model = new MockModel({
       script: [
         MockModel.toolCalls(
           MockModel.toolCall('ca', 'a', {}),
           MockModel.toolCall('cb', 'b', {}),
+          MockModel.toolCall('cc', 'c', {}),
         ),
-        { final: 'both done', toolCalls: [] },
+        { final: 'all done', toolCalls: [] },
       ],
     });
-    const runner = new Runner({ agent: makeAgent({ model, tools: [a, b] }) });
+    const runner = new Runner({ agent: makeAgent({ model, tools: [a, b, c] }) });
 
     const result = await runner.run('multi');
 
     assert.equal(result.status, 'completed');
     assert.equal(result.turns.length, 2);
-    assert.deepEqual(order, ['a', 'b']); // sequential strategy preserves call order
-    assert.equal(result.turns[0].toolResults.length, 2);
+    assert.deepEqual(order, ['a', 'b', 'c']);
     assert.deepEqual(
-      model.requestAt(1).input.filter((m) => m.role === 'tool').map((m) => m.toolCallId),
-      ['ca', 'cb'],
+      result.turns[0].toolResults.map((record) => record.toolName),
+      ['a', 'b', 'c'],
+    );
+    assert.deepEqual(
+      model.requestAt(1).input.filter((message) => message.role === 'tool').map((message) => message.toolCallId),
+      ['ca', 'cb', 'cc'],
     );
   });
 
@@ -169,7 +174,38 @@ describe('Agent Loop — tool cycles', () => {
     assert.equal(result.error.name, 'ToolNotFoundError');
     assert.equal(result.error.toolName, 'missing_tool');
     assert.ok(typeof result.error.runId === 'string');
+    assert.equal(model.callCount, 1);
+    assert.equal(result.turns.length, 1);
     assert.equal(result.lastTurn.status, 'failed');
+    assert.deepEqual(result.lastTurn.toolResults, []);
+  });
+
+  it('tool validation failure becomes an error tool-result and the loop CONTINUES to final', async () => {
+    const model = new MockModel({
+      script: [
+        MockModel.toolCalls(MockModel.toolCall('c1', 'greet', { wrong: 'field' })),
+        { final: 'recovered after validation error', toolCalls: [] },
+      ],
+    });
+    let toolInvocations = 0;
+    const greet = makeTool('greet', () => ++toolInvocations, {
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+      },
+    });
+    const runner = new Runner({ agent: makeAgent({ model, tools: [greet] }) });
+
+    const result = await runner.run('try invalid arguments');
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.output, 'recovered after validation error');
+    assert.equal(model.callCount, 2);
+    assert.equal(toolInvocations, 0);
+    assert.equal(result.turns[0].toolResults[0].status, 'error');
+    assert.equal(result.turns[0].toolResults[0].error.name, 'ToolValidationError');
+    assert.match(JSON.parse(model.requestAt(1).input.at(-1).content).error, /invalid arguments/);
   });
 
   it('tool failure becomes an error tool-result and the loop CONTINUES to final', async () => {
@@ -190,7 +226,9 @@ describe('Agent Loop — tool cycles', () => {
     // error results — the run continues rather than dying.
     assert.equal(result.status, 'completed');
     assert.equal(result.output, 'recovered after tool error');
+    assert.equal(model.callCount, 2);
     assert.equal(result.turns[0].toolResults[0].status, 'error');
+    assert.equal(result.turns[0].toolResults[0].error.name, 'ToolExecutionError');
     assert.match(JSON.parse(model.requestAt(1).input.at(-1).content).error, /transient outage/);
   });
 });

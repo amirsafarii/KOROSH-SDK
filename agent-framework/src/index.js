@@ -21,6 +21,7 @@ export {
   InvalidToolCallError,
   ModelError,
   LoopError,
+  InvalidStateTransitionError,
   MaxTurnsError,
   ToolError,
   ToolNotFoundError,

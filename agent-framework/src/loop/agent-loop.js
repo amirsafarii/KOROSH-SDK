@@ -13,6 +13,7 @@ import { EventBus, RunEvents } from '../events/bus.js';
 import { deepCopy } from '../utils/objects.js';
 import { nowMs } from '../utils/time.js';
 import { toPlainError } from '../utils/serialization.js';
+import { RunStateEvents, RunStateMachine } from '../state/run-state-machine.js';
 import { Turn } from './turn.js';
 
 export const DEFAULT_MAX_TURNS = 10;
@@ -89,6 +90,7 @@ export class AgentLoop {
     });
     const runId = runContext.runId;
     const startedAt = runContext.startedAt;
+    const stateMachine = new RunStateMachine();
 
     this.#events.emit(RunEvents.RUN_STARTED, {
       runId,
@@ -97,6 +99,8 @@ export class AgentLoop {
 
     const turns = [];
     try {
+      this.#transitionState(stateMachine, RunStateEvents.PREPARE, { runId });
+
       for (let turnNumber = 1; turnNumber <= this.#maxTurns; turnNumber++) {
         const turn = new Turn({ number: turnNumber, input: deepCopy(history) });
         turns.push(turn);
@@ -105,6 +109,7 @@ export class AgentLoop {
           turnId: turn.id,
           data: { number: turn.number },
         });
+        this.#transitionState(stateMachine, RunStateEvents.REQUEST_MODEL, { runId, turn });
 
         this.#events.emit(RunEvents.MODEL_STARTED, {
           runId,
@@ -136,6 +141,10 @@ export class AgentLoop {
           );
         }
 
+        this.#transitionState(stateMachine, RunStateEvents.MODEL_RESULT_RECEIVED, {
+          runId,
+          turn,
+        });
         assertModelResult(modelResult, { runId, turnId: turn.id });
         // Normalize only Core-owned fields. Provider-specific usage/metadata
         // are passed through by reference without coupling Core to them.
@@ -158,8 +167,10 @@ export class AgentLoop {
             turnId: turn.id,
             data: { number: turn.number, status: turn.status },
           });
+          this.#transitionState(stateMachine, RunStateEvents.COMPLETE, { runId, turn });
           const result = buildRunResult({
             runContext,
+            stateMachine,
             status: 'completed',
             output: modelResult.final,
             turns,
@@ -170,11 +181,16 @@ export class AgentLoop {
         }
 
         if (turnNumber < this.#maxTurns && turn.toolCalls.length > 0) {
+          this.#transitionState(stateMachine, RunStateEvents.EXECUTE_TOOLS, { runId, turn });
           const { executions, messages } = await this.#executor.executeCalls(turn.toolCalls, {
             runContext,
             signal,
             turnId: turn.id,
             events: this.#events,
+          });
+          this.#transitionState(stateMachine, RunStateEvents.TOOL_RESULTS_RECEIVED, {
+            runId,
+            turn,
           });
           turn.setToolResults(executions);
           history.push(...messages);
@@ -214,8 +230,13 @@ export class AgentLoop {
           data: { number: interruptedTurn.number, status: interruptedTurn.status },
         });
       }
+      this.#transitionState(stateMachine, RunStateEvents.FAIL, {
+        runId,
+        turn: interruptedTurn ?? turns.at(-1) ?? null,
+      });
       const result = buildRunResult({
         runContext,
+        stateMachine,
         status: 'failed',
         error: failure,
         turns,
@@ -227,6 +248,20 @@ export class AgentLoop {
       });
       return result;
     }
+  }
+
+  #transitionState(stateMachine, event, { runId, turn = null }) {
+    const record = stateMachine.transition(event, {
+      runId,
+      turnId: turn?.id ?? null,
+      turnNumber: turn?.number ?? null,
+    });
+    this.#events.emit(RunEvents.RUN_STATE_CHANGED, {
+      runId,
+      turnId: turn?.id ?? null,
+      data: record,
+    });
+    return record;
   }
 
   #emitRunCompleted(runId, result) {
@@ -308,11 +343,21 @@ function markFailedTurn(turns, error) {
   return null;
 }
 
-function buildRunResult({ runContext, status, output = null, error = null, turns, startedAt }) {
+function buildRunResult({
+  runContext,
+  stateMachine,
+  status,
+  output = null,
+  error = null,
+  turns,
+  startedAt,
+}) {
   const endedAt = nowMs();
   return {
     runId: runContext.runId,
     status,
+    state: stateMachine.currentState,
+    stateTransitions: stateMachine.history,
     output,
     ...(error ? { error: toPlainError(error) } : {}),
     turns: turns.map((t) => t.snapshot()),

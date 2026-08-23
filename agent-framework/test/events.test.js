@@ -22,7 +22,10 @@ describe('Event system', () => {
     const result = await runner.run('go');
 
     assert.equal(result.status, 'completed');
-    assert.deepEqual(seen.map((e) => e.type), [
+    const phaseOneTypes = seen
+      .map((event) => event.type)
+      .filter((type) => type !== RunEvents.RUN_STATE_CHANGED);
+    assert.deepEqual(phaseOneTypes, [
       RunEvents.RUN_STARTED,
       RunEvents.TURN_STARTED,
       RunEvents.MODEL_STARTED,
